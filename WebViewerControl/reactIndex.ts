@@ -9,7 +9,9 @@ export class ReactWebViewerControl implements ComponentFramework.ReactControl<II
   private context: ComponentFramework.Context<IInputs>;
   private container: HTMLDivElement;
 
-  constructor() {}
+  constructor() {
+    this.initializeRequestInterception();
+  }
 
   public init(context: ComponentFramework.Context<IInputs>, notifyOutputChanged: () => void, state: ComponentFramework.Dictionary): void {
     this.notifyOutputChanged = notifyOutputChanged;
@@ -46,5 +48,68 @@ export class ReactWebViewerControl implements ComponentFramework.ReactControl<II
   public destroy(): void {
     // Add code to cleanup control if necessary
     ReactDOM.unmountComponentAtNode(this.container);
+  }
+
+  private initializeRequestInterception() {
+    // Intercepting XMLHttpRequest
+    const originalXHROpen = XMLHttpRequest.prototype.open;
+    const originalXHRSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+      this._url = url; // Store the URL for later use
+      return originalXHROpen.apply(this, [method, url, ...rest]);
+    };
+
+    XMLHttpRequest.prototype.send = function(...args) {
+      const xhrInstance = this;
+      if (shouldIntercept(this._url)) {
+        console.log(`Intercepted XHR request to: ${this._url}`);
+        xhrInstance.abort(); // Optionally abort the original request
+        setTimeout(() => {
+          xhrInstance.readyState = 4;
+          xhrInstance.status = 200;
+          xhrInstance.responseText = '<html><body>Intercepted Content</body></html>';
+          xhrInstance.onreadystatechange && xhrInstance.onreadystatechange();
+        }, 0);
+      } else {
+        return originalXHRSend.apply(this, args);
+      }
+    };
+
+    // Intercepting fetch
+    const originalFetch = window.fetch;
+    window.fetch = function(...args) {
+      const [url, options] = args;
+      if (shouldIntercept(url)) {
+        console.log(`Intercepted fetch request to: ${url}`);
+        return new Promise((resolve) => {
+          resolve(new Response('<html><body>Intercepted Content</body></html>', {
+            status: 200,
+            headers: { 'Content-Type': 'text/html' }
+          }));
+        });
+      } else {
+        return originalFetch.apply(this, args);
+      }
+    }.bind(this);
+
+    // Helper functions
+    function shouldIntercept(url) {
+      // Add your logic to determine if the request should be intercepted
+      return url.includes('public/ui/index.html');
+    }
+
+    function getCachedResponse(url) {
+      const cachedData = localStorage.getItem(url);
+      return cachedData ? JSON.parse(cachedData).response : null;
+    }
+
+    function cacheResponse(url, response) {
+      const cachedData = {
+        response: response,
+        timestamp: Date.now()
+      };
+      localStorage.setItem(url, JSON.stringify(cachedData));
+    }
   }
 }
