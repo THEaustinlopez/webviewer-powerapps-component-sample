@@ -55,15 +55,16 @@ export class ReactWebViewerControl implements ComponentFramework.ReactControl<II
     const originalXHROpen = XMLHttpRequest.prototype.open;
     const originalXHRSend = XMLHttpRequest.prototype.send;
 
-    XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-      this._url = url; // Store the URL for later use
+    XMLHttpRequest.prototype.open = function(this: XMLHttpRequest, method: string, url: string, ...rest: any[]) {
+      (this as any)._url = url; // Store the URL for later use
       return originalXHROpen.apply(this, [method, url, ...rest]);
     };
 
-    XMLHttpRequest.prototype.send = function(...args) {
+    XMLHttpRequest.prototype.send = function(this: XMLHttpRequest, ...args: any[]) {
       const xhrInstance = this;
-      if (shouldIntercept(this._url)) {
-        console.log(`Intercepted XHR request to: ${this._url}`);
+      const url = (xhrInstance as any)._url;
+      if (shouldIntercept(url)) {
+        console.log(`Intercepted XHR request to: ${url}`);
         xhrInstance.abort(); // Optionally abort the original request
         setTimeout(() => {
           xhrInstance.readyState = 4;
@@ -78,9 +79,9 @@ export class ReactWebViewerControl implements ComponentFramework.ReactControl<II
 
     // Intercepting fetch
     const originalFetch = window.fetch;
-    window.fetch = function(...args) {
+    window.fetch = function(...args: [RequestInfo, RequestInit?]): Promise<Response> {
       const [url, options] = args;
-      if (shouldIntercept(url)) {
+      if (shouldIntercept(url.toString())) {
         console.log(`Intercepted fetch request to: ${url}`);
         return new Promise((resolve) => {
           resolve(new Response('<html><body>Intercepted Content</body></html>', {
@@ -94,17 +95,17 @@ export class ReactWebViewerControl implements ComponentFramework.ReactControl<II
     }.bind(this);
 
     // Helper functions
-    function shouldIntercept(url) {
+    function shouldIntercept(url: string): boolean {
       // Add your logic to determine if the request should be intercepted
       return url.includes('public/ui/index.html');
     }
 
-    function getCachedResponse(url) {
+    function getCachedResponse(url: string): string | null {
       const cachedData = localStorage.getItem(url);
       return cachedData ? JSON.parse(cachedData).response : null;
     }
 
-    function cacheResponse(url, response) {
+    function cacheResponse(url: string, response: string): void {
       const cachedData = {
         response: response,
         timestamp: Date.now()
@@ -113,3 +114,4 @@ export class ReactWebViewerControl implements ComponentFramework.ReactControl<II
     }
   }
 }
+
