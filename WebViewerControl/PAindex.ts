@@ -232,12 +232,37 @@ export class ReactWebViewerControl
     }; /*.bind(this);*/
   }
   // Helper functions
-  public shouldIntercept(url: string | URL): boolean {
-    console.log("checking if should intercept url: ", url);
-    console.log("url includes public? ", url.toString().includes("public"));
-    return url.toString().includes("public");
-    // return true;
+  private interceptScriptTags() {
+    const self = this;
+
+    const originalCreateElement = document.createElement;
+    document.createElement = function(tagName: string, options?: ElementCreationOptions): HTMLElement {
+      const element = originalCreateElement.call(document, tagName, options);
+      if (tagName.toLowerCase() === 'script') {
+        const originalSetAttribute = element.setAttribute;
+        element.setAttribute = function(name: string, value: string) {
+          if (name === 'src') {
+            console.log(`Intercepted script tag with src: ${value}`);
+            if (self.shouldIntercept(value)) {
+              self.interceptedUrl = value;
+              self.notifyOutputChanged();
+            }
+          }
+          return originalSetAttribute.call(this, name, value);
+        };
+      }
+      return element;
+    };
   }
+
+  private shouldIntercept(url: string): boolean {
+    // Implement logic to determine if the URL should be intercepted
+    // For example, intercept all requests to a specific path
+    const intercept = url.includes('/public/ui/') || url.includes('/core/webviewer-core.min.js') || url.includes('/ui/webviewer-ui.min.js');
+    console.log(`Should intercept ${url}: ${intercept}`);
+    return intercept;
+  }
+
 
   // public waitForFileContent(): Promise<{
   //   content: string;
