@@ -41,20 +41,39 @@ export class ReactWebViewerControl implements ComponentFramework.ReactControl<II
     const viewerHeight = context.parameters.viewerheight.raw!;
     const viewerWidth = context.parameters.viewerwidth.raw!;
 
-    if (context.parameters.fileData.raw && this.fileData != JSON.parse(context.parameters.fileData.raw)) {
-      this.fileData = JSON.parse(context.parameters.fileData.raw);
-      console.log('fileData', this.fileData);
-      this.fetchingContent = false;
-      this.processNextUrl();
+    // Check if fileData is already a JavaScript object
+    if (context.parameters.fileData.raw) {
+        console.log('Raw fileData:', context.parameters.fileData.raw);
+
+        if (typeof context.parameters.fileData.raw === 'string') {
+            try {
+                const parsedFileData = JSON.parse(context.parameters.fileData.raw);
+                if (this.fileData != parsedFileData) {
+                    this.fileData = parsedFileData;
+                    console.log('Parsed fileData:', this.fileData);
+                    this.fetchingContent = false;
+                    this.processNextUrl();
+                }
+            } catch (error) {
+                console.error('Error parsing fileData:', error);
+                console.error('fileData.raw content:', context.parameters.fileData.raw);
+            }
+        } else if (typeof context.parameters.fileData.raw === 'object') {
+            this.fileData = context.parameters.fileData.raw as FileData;
+            console.log('Assigned fileData directly:', this.fileData);
+            this.fetchingContent = false;
+            this.processNextUrl();
+        }
     }
 
     return React.createElement(WebViewerControl, {
-      docUrl,
-      viewerHeight,
-      viewerWidth,
-      onDocSave: this.handleDocSave.bind(this),
+        docUrl,
+        viewerHeight,
+        viewerWidth,
+        onDocSave: this.handleDocSave.bind(this),
     });
-  }
+}
+
 
   private handleDocSave(docUrl: string): void {
     this.notifyOutputChanged();
