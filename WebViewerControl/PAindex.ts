@@ -3,12 +3,6 @@ import * as React from "react";
 import * as ReactDOM from "react-dom";
 import WebViewerControl from "./WebViewerControl";
 
-// declare global {
-//   interface XMLHttpRequest {
-//     _url?: string | URL;
-//   }
-// }
-
 export class ReactWebViewerControl
   implements ComponentFramework.ReactControl<IInputs, IOutputs>
 {
@@ -17,6 +11,7 @@ export class ReactWebViewerControl
   private context: ComponentFramework.Context<IInputs>;
   private container: HTMLDivElement;
   private interceptedUrl: string;
+  private fileData: {content: string, contentType: string, contentLength: string};
   private fileContent: string;
   private fileContentLength: number;
   private fileContentType: string;
@@ -26,6 +21,7 @@ export class ReactWebViewerControl
   constructor() {
     console.log("Constructor: Initializing request intercpetion...");
     this.initializeRequestInterception();
+    this.interceptScriptTags();
   }
 
   public init(
@@ -49,19 +45,14 @@ export class ReactWebViewerControl
     const viewerHeight = context.parameters.viewerheight.raw!;
     const viewerWidth = context.parameters.viewerwidth.raw!;
 
-    if (context.parameters.fileContent.raw! && this.fileContent != context.parameters.fileContent.raw) {
-      console.log("fileContent", this.fileContent);
-      this.fileContent = context.parameters.fileContent.raw;
+    if (context.parameters.fileData.raw! && this.fileData != context.parameters.fileData.raw) {
+      this.fileData = JSON.parse(context.parameters.fileData.raw);
+      console.log('fileData.content', this.fileData.content);
+      console.log('fileData.contentType', this.fileData.contentType);
+      console.log('fileData.contentLength', this.fileData.contentLength);
+
       this.fetchingContent = false;
-      this.processNextUrl();
-    }
-
-    if (context.parameters.fileContentLength.raw! && this.fileContentLength != context.parameters.fileContentLength.raw) {
-      this.fileContentLength = context.parameters.fileContentLength.raw;
-    }
-
-    if (context.parameters.fileContentType.raw! && this.fileContentType != context.parameters.fileContentType.raw) {
-      this.fileContentType = context.parameters.fileContentType.raw;
+      // this.processNextUrl();
     }
 
     return React.createElement(WebViewerControl, {
@@ -172,7 +163,7 @@ export class ReactWebViewerControl
               status: 200,
               headers: {
                 "Content-Length": response.contentLength.toString(),
-                "Content-Type": response.contentType,
+                "Content-Type": response.contentType + '; charset=UTF-8',
                 // "Accept-Ranges": "bytes",
                 "Content-Encoding": "br"
               }
@@ -188,51 +179,16 @@ export class ReactWebViewerControl
             }));
           });
         });
-        // Version 1 //
-        // return await self
-        //   .waitForFileContent()
-        //   .then((response) => {
-        //     console.log("fetch fileContent", response);
-        //     return new Response(response.content, {
-        //       status: 200,
-        //       headers: {
-        //         "Content-Length": response.contentLength.toString(),
-        //         "Content-Type": response.contentType,
-        //         "Accept-Ranges": "bytes",
-        //         Content_Encoding: "br",
-        //       },
-        //     });
-        //   })
-        //   .catch((error) => {
-        //     console.error(
-        //       "[ANALYTICS ERROR] Error fetching file content because ",
-        //       error
-        //     );
-        //     return new Response(
-        //       "<html><body>Error fetching file content</body></html>",
-        //       {
-        //         status: 500,
-        //         headers: { "Content-Type": "text/html" },
-        //       }
-        //     );
-        //   });
-        // THIS WORKED BEFORE!
-        // return new Promise((resolve) => {
-        //   resolve(
-        //     new Response("<html><body>Intercepted Content</body></html>", {
-        //       status: 200,
-        //       headers: { "Content-Type": "text/html" },
-        //     })
-        //   );
-        // });
+       
       } else {
         console.log("Not intercepting fetch request to: ", url);
         return originalFetch.apply(self, [input, init]);
       }
     }; /*.bind(this);*/
   }
-  // Helper functions
+
   private interceptScriptTags() {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
     const self = this;
 
     const originalCreateElement = document.createElement;
@@ -263,36 +219,9 @@ export class ReactWebViewerControl
     return intercept;
   }
 
-
-  // public waitForFileContent(): Promise<{
-  //   content: string;
-  //   contentLength: number;
-  //   contentType: string;
-  // }> {
-  //   return new Promise((resolve) => {
-  //     const interval = setInterval(() => {
-  //       if (
-  //         this.fileContent &&
-  //         this.fileContentLength &&
-  //         this.fileContentType
-  //       ) {
-  //         clearInterval(interval);
-  //         resolve({
-  //           content: this.fileContent,
-  //           contentLength: this.fileContentLength,
-  //           contentType: this.fileContentType,
-  //         });
-  //       }
-  //     }, 100);
-  //   });
-  // }
-
   private processNextUrl(): void {
-    if (this.fileContent && this.fileContentLength && this.fileContentType) {
-      // const decodedContent = this.decodeBase64(
-      //   this.fileContent,
-      //   this.fileContentType
-      // );
+    console.log('processNextUrl(): ', { fileContent: this.fileContent, })
+    if (this.fileData) {
       this.clearFileContent();
 
       // Simulate the response for XMLHttpRequest
@@ -316,10 +245,7 @@ export class ReactWebViewerControl
   }
 
   private clearFileContent(): void {
-    this.fileContent = "";
-    this.fileContentLength = 0;
-    this.fileContentType = "";
-    console.log('file content cleared')
+    this.fileData = { content: "", contentType: "", contentLength: 0 }    console.log('fileData cleared')
   }
 
   private waitForFileContent(): Promise<{
@@ -329,39 +255,17 @@ export class ReactWebViewerControl
   }> {
     return new Promise((resolve) => {
       const interval = setInterval(() => {
-        if (this.fileContent && this.fileContentLength && this.fileContentType) {
-          console.log('waitingForFileContent promisefulfilled with: ', this.fileContent)
+        if (this.fileData) {
+          console.log('waitingForFileContent promisefulfilled with: ', this.fileData)
           clearInterval(interval);
           resolve({
-            content: this.fileContent,
-            contentLength: this.fileContentLength,
-            contentType: this.fileContentType,
+            content: this.fileData.content,
+            contentLength: this.fileData.contentLength,
+            contentType: this.fileData.contentType,
           });
         }
       }, 100);
     });
-  }
-
-  private decodeBase64(
-    base64: string,
-    contentType: string
-  ): Blob | ArrayBuffer {
-    const binaryString = atob(base64);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-
-    if (
-      contentType.startsWith("application/pdf") ||
-      contentType.startsWith("application/octet-stream") ||
-      contentType.startsWith("application/wasm")
-    ) {
-      return bytes.buffer;
-    } else {
-      return new Blob([bytes], { type: contentType });
-    }
   }
 }
 
