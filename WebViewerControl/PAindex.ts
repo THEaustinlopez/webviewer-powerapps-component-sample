@@ -3,25 +3,25 @@ import * as React from "react";
 import * as ReactDOM from "react-dom";
 import WebViewerControl from "./WebViewerControl";
 
-export class ReactWebViewerControl
-  implements ComponentFramework.ReactControl<IInputs, IOutputs>
-{
+interface FileData {
+  content: string;
+  contentType: string;
+  contentLength: string;
+}
+
+export class ReactWebViewerControl implements ComponentFramework.ReactControl<IInputs, IOutputs> {
   private notifyOutputChanged: () => void;
-  private pdfURI: string = "";
   private context: ComponentFramework.Context<IInputs>;
   private container: HTMLDivElement;
-  private interceptedUrl: string;
-  private fileData: {content: string, contentType: string, contentLength: string};
-  private fileContent: string;
-  private fileContentLength: number;
-  private fileContentType: string;
-  private fetchingContent: boolean = false;
+  private interceptedUrl: string | null = null;
+  private fileData: FileData | null = null;
+  private urlQueue: string[] = [];
+  private isProcessingQueue: boolean = false;
   private statusMessage: string = "Initializing...";
 
   constructor() {
-    console.log("Constructor: Initializing request intercpetion...");
+    this.container = document.createElement("div");
     this.initializeRequestInterception();
-    this.interceptScriptTags();
   }
 
   public init(
@@ -29,30 +29,23 @@ export class ReactWebViewerControl
     notifyOutputChanged: () => void,
     state: ComponentFramework.Dictionary
   ): void {
-    console.log("Init: Component Initialized");
     this.notifyOutputChanged = notifyOutputChanged;
     this.context = context;
-    this.container = document.createElement("div");
+    console.log("Component Initialized");
   }
 
-  public updateView(
-    context: ComponentFramework.Context<IInputs>
-  ): React.ReactElement {
-    console.log("updateView: updating view");
+  public updateView(context: ComponentFramework.Context<IInputs>): React.ReactElement {
     this.context = context;
 
     const docUrl = context.parameters.doc.raw!;
     const viewerHeight = context.parameters.viewerheight.raw!;
     const viewerWidth = context.parameters.viewerwidth.raw!;
 
-    if (context.parameters.fileData.raw! && this.fileData != context.parameters.fileData.raw) {
+    if (context.parameters.fileData.raw && this.fileData != JSON.parse(context.parameters.fileData.raw)) {
       this.fileData = JSON.parse(context.parameters.fileData.raw);
-      console.log('fileData.content', this.fileData.content);
-      console.log('fileData.contentType', this.fileData.contentType);
-      console.log('fileData.contentLength', this.fileData.contentLength);
-
+      console.log('fileData', this.fileData);
       this.fetchingContent = false;
-      // this.processNextUrl();
+      this.processNextUrl();
     }
 
     return React.createElement(WebViewerControl, {
@@ -64,113 +57,59 @@ export class ReactWebViewerControl
   }
 
   private handleDocSave(docUrl: string): void {
-    this.pdfURI = docUrl;
     this.notifyOutputChanged();
+    console.log("Document saved:", docUrl);
   }
 
   public getOutputs(): IOutputs {
-    console.log("interceptedUrl", this.interceptedUrl);
     return {
-      pdfdoc: this.pdfURI,
       interceptedUrl: this.interceptedUrl,
     };
   }
 
   public destroy(): void {
-    console.log("destroying component");
     ReactDOM.unmountComponentAtNode(this.container);
+    console.log("Component destroyed.");
   }
 
-  public initializeRequestInterception() {
-    // eslint-disable-next-line @typescript-eslint/no-this-alias
+  private initializeRequestInterception() {
     const self = this;
 
     // Intercepting XMLHttpRequest
     const originalXHROpen = XMLHttpRequest.prototype.open;
     const originalXHRSend = XMLHttpRequest.prototype.send;
 
-    XMLHttpRequest.prototype.open = function (
-      this: XMLHttpRequest,
-      method: string,
-      url: string | URL,
-      async: boolean = true,
-      username?: string | null | undefined,
-      password?: string | null | undefined
-    ): void {
-      console.log("XMLHttpRequest.open called with URL: ", url);
-      // this._url = url;
+    XMLHttpRequest.prototype.open = function (this: XMLHttpRequest, method: string, url: string | URL, async: boolean = true, username?: string | null, password?: string | null): void {
+      this._url = url.toString();
       return originalXHROpen.call(this, method, url, async, username, password);
     };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    XMLHttpRequest.prototype.send = function (
-      this: XMLHttpRequest,
-      ...args: [body?: Document | XMLHttpRequestBodyInit | null | undefined]
-    ) {
-      // eslint-disable-next-line @typescript-eslint/no-this-alias
-      const xhrInstance = this; // TODO: this or self?
-      const url = xhrInstance.responseURL;
-      console.log("XMLHttpRequest.send called with URL: ", url);
+    XMLHttpRequest.prototype.send = function (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
+      const url = this._url;
       if (self.shouldIntercept(url)) {
         console.log(`Intercepted XHR request to: ${url}`);
-        xhrInstance.abort();
-        self.interceptedUrl = url;
-        self.notifyOutputChanged();
-        self
-          .waitForFileContent()
-          .then((responseText) => {
-            console.log("responseText", responseText);
-            // setTimeout(() => {
-            //   console.log("Generating response for intercepted url: ", url);
-            //   xhrInstance.readyState = 4;
-            //   xhrInstance.status = 200;
-            //   xhrInstance.responseText = responseText;
-            //   xhrInstance.onreadystatechange &&
-            //     xhrInstance.onreadystatechange();
-            // }, 0);
-          })
-          .catch((error) => {
-            console.error(
-              "[ANALYTICS ERROR]: Error fetching fileContent for because ",
-              error
-            );
-          });
+        self.enqueueUrl(url);
       } else {
-        console.log("Not intercepting request to: ", url);
-        return originalXHRSend.apply(xhrInstance, args);
+        return originalXHRSend.apply(this, arguments);
       }
     };
 
     // Intercepting fetch
     const originalFetch = window.fetch;
-    window.fetch = async function (
-      input: RequestInfo | URL,
-      init?: RequestInit
-    ): Promise<Response> {
-      const url = typeof input === "string" ? input : "";
-      console.log("fetch called with URL: ", url);
+    window.fetch = function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+      const url = typeof input === "string" ? input : input.url;
       if (self.shouldIntercept(url)) {
         console.log(`Intercepted fetch request to: ${url}`);
-        self.interceptedUrl = url;
-        self.fetchingContent = true;
-        self.notifyOutputChanged();
-        // version 2 //
+        self.enqueueUrl(url);
         return new Promise((resolve) => {
           self.waitForFileContent().then(response => {
-            console.log('response in waitForFileContent.then()', response)
-            // const body = self.decodeBase64(response.content, response.contentType);
-            const newResponse = new Response(response.content /*body*/, {
+            resolve(new Response(response.content, {
               status: 200,
               headers: {
-                "Content-Length": response.contentLength.toString(),
-                "Content-Type": response.contentType + '; charset=UTF-8',
-                // "Accept-Ranges": "bytes",
-                "Content-Encoding": "br"
+                "Content-Length": response.contentLength,
+                "Content-Type": response.contentType,
               }
-            });
-            console.log('newResponse', newResponse);
-            resolve(newResponse);
-
+            }));
           }).catch(error => {
             console.error(`Error fetching file for ${url}:`, error);
             resolve(new Response('<html><body>Error fetching file content</body></html>', {
@@ -179,29 +118,25 @@ export class ReactWebViewerControl
             }));
           });
         });
-       
       } else {
-        console.log("Not intercepting fetch request to: ", url);
-        return originalFetch.apply(self, [input, init]);
+        return originalFetch.apply(this, arguments);
       }
-    }; /*.bind(this);*/
+    };
+
+    this.interceptScriptTags();
   }
 
   private interceptScriptTags() {
-    // eslint-disable-next-line @typescript-eslint/no-this-alias
     const self = this;
-
     const originalCreateElement = document.createElement;
-    document.createElement = function(tagName: string, options?: ElementCreationOptions): HTMLElement {
+    document.createElement = function (tagName: string, options?: ElementCreationOptions): HTMLElement {
       const element = originalCreateElement.call(document, tagName, options);
       if (tagName.toLowerCase() === 'script') {
         const originalSetAttribute = element.setAttribute;
-        element.setAttribute = function(name: string, value: string) {
+        element.setAttribute = function (name: string, value: string) {
           if (name === 'src') {
-            console.log(`Intercepted script tag with src: ${value}`);
             if (self.shouldIntercept(value)) {
-              self.interceptedUrl = value;
-              self.notifyOutputChanged();
+              self.enqueueUrl(value);
             }
           }
           return originalSetAttribute.call(this, name, value);
@@ -212,67 +147,69 @@ export class ReactWebViewerControl
   }
 
   private shouldIntercept(url: string): boolean {
-    // Implement logic to determine if the URL should be intercepted
-    // For example, intercept all requests to a specific path
-    const intercept = url.includes('/public/ui/') || url.includes('/core/webviewer-core.min.js') || url.includes('/ui/webviewer-ui.min.js');
-    console.log(`Should intercept ${url}: ${intercept}`);
-    return intercept;
+    return url.includes('/public/ui/') || url.includes('/core/webviewer-core.min.js') || url.includes('/ui/webviewer-ui.min.js');
+  }
+
+  private enqueueUrl(url: string): void {
+    this.urlQueue.push(url);
+    if (!this.isProcessingQueue) {
+      this.processNextUrl();
+    }
   }
 
   private processNextUrl(): void {
-    console.log('processNextUrl(): ', { fileContent: this.fileContent, })
-    if (this.fileData) {
-      this.clearFileContent();
+    if (this.urlQueue.length === 0) {
+      this.isProcessingQueue = false;
+      return;
+    }
 
-      // Simulate the response for XMLHttpRequest
+    this.isProcessingQueue = true;
+    this.interceptedUrl = this.urlQueue.shift()!;
+    this.notifyOutputChanged();
+
+    // wait for file content and process
+    this.waitForFileContent().then(response => {
       const mockXhr = new MockXMLHttpRequest();
       mockXhr.open("GET", this.interceptedUrl);
-      mockXhr.send();
       setTimeout(() => {
         mockXhr.readyState = 4;
         mockXhr.status = 200;
-        mockXhr.response = this.fileContent/*decodedContent*/;
-        mockXhr.responseText = this.fileContent; // Set base64 content as responseText
+        mockXhr.response = response.content;
+        mockXhr.responseText = response.content;
         if (mockXhr.onreadystatechange) {
           mockXhr.onreadystatechange();
         }
         mockXhr.setResponseHeaders({
-          "Content-Length": this.fileContentLength.toString(),
-          "Content-Type": this.fileContentType,
+          "Content-Length": response.contentLength,
+          "Content-Type": response.contentType,
         });
+        this.processNextUrl(); // Move to the next URL
       }, 0);
-    }
+    }).catch(error => {
+      console.error(`Error processing URL ${this.interceptedUrl}:`, error);
+      this.processNextUrl(); // Continue with the next URL even if there's an error
+    });
   }
 
-  private clearFileContent(): void {
-    this.fileData = { content: "", contentType: "", contentLength: 0 }    console.log('fileData cleared')
-  }
-
-  private waitForFileContent(): Promise<{
-    content: string;
-    contentLength: number;
-    contentType: string;
-  }> {
-    return new Promise((resolve) => {
+  private waitForFileContent(): Promise<FileData> {
+    return new Promise((resolve, reject) => {
       const interval = setInterval(() => {
         if (this.fileData) {
-          console.log('waitingForFileContent promisefulfilled with: ', this.fileData)
           clearInterval(interval);
-          resolve({
-            content: this.fileData.content,
-            contentLength: this.fileData.contentLength,
-            contentType: this.fileData.contentType,
-          });
+          resolve(this.fileData);
         }
       }, 100);
     });
+  }
+
+  private clearFileContent(): void {
+    this.fileData = null;
   }
 }
 
 class MockXMLHttpRequest {
   public readyState: number = 0;
   public status: number = 0;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   public response: any = null;
   public responseText: string = "";
   public onreadystatechange: (() => void) | null = null;
@@ -286,16 +223,12 @@ class MockXMLHttpRequest {
   }
 
   setRequestHeader(name: string, value: string): void {
-    console.log(
-      `MockXMLHttpRequest.setRequestHeader called with ${name}: ${value}`
-    );
+    console.log(`MockXMLHttpRequest.setRequestHeader called with ${name}: ${value}`);
   }
 
   setResponseHeaders(headers: { [key: string]: string }): void {
     for (const [key, value] of Object.entries(headers)) {
-      console.log(
-        `MockXMLHttpRequest.setResponseHeader called with ${key}: ${value}`
-      );
+      console.log(`MockXMLHttpRequest.setResponseHeader called with ${key}: ${value}`);
     }
   }
 }
